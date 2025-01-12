@@ -1,195 +1,167 @@
 const puppeteer = require("puppeteer");
-const fs = require("fs");
 const csv = require("csv-writer").createObjectCsvWriter;
 
-const category = "Coffee Tables";
-const baseURL = "https://www.lakkadhaara.com/collections/coffee-tables";
-
 const csvWriter = csv({
-  path: "coffee_tables_detailed.csv",
+  path: "wedding_venues.csv",
   header: [
-    { id: "brand", title: "Brand" },
-    { id: "sku", title: "SKU" },
-    { id: "title", title: "Title" },
-    { id: "price", title: "Price" },
-    { id: "url", title: "URL" },
-    { id: "description", title: "Description" },
-    { id: "note", title: "Note" },
-    { id: "dimensions", title: "Dimensions (Cms)" },
-    { id: "materials", title: "Materials" },
-    { id: "productFinish", title: "Product Finish" },
-    { id: "estimateShipping", title: "Estimate Shipping" },
-    { id: "careInstructions", title: "Care Instructions" },
-    { id: "imageUrls", title: "Image URLs" }
+    { id: "name", title: "Venue Name" },
+    { id: "about", title: "About" },
+    { id: "spaceCapacity", title: "Space Available and Capacity" },
+    { id: "facilities", title: "Facilities Available" },
+    { id: "cuisines", title: "Cuisines" },
+    { id: "location", title: "Location" },
+    { id: "otherServices", title: "Other Services" },
+    { id: "price", title: "Price" }
   ]
 });
 
-async function scrapeProductPage(browser, url) {
-  const page = await browser.newPage();
-  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
+async function scrapeVenuePage(page, url) {
   try {
     await page.goto(url, { waitUntil: "networkidle0", timeout: 60000 });
-    const productData = await page.evaluate(async () => {
-      const brand =
-        document.querySelector(
-          ".product__text.inline-richtext.caption-with-letter-spacing"
-        )?.innerText || "N/A";
 
-      const skuElement = document.querySelector(".product__sku");
-      const sku = skuElement
-        ? skuElement.textContent.split(":").pop().trim()
-        : "N/A";
-
-      const title =
-        document.querySelector(".product__title h1")?.innerText || "N/A";
-      const price =
-        document.querySelector(".price__regular .price-item")?.innerText ||
-        "N/A";
-      const description =
-        document.querySelector(".product__description")?.innerText || "N/A";
-      const note =
-        document.querySelector(".product__text.inline-richtext em")
-          ?.innerText || "N/A";
-
-      const imageUrls = Array.from(
-        document.querySelectorAll(".product__media-item img")
-      ).map((img) => img.src);
-
-      // Function to wait for a specified time
-      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-      // Click on all accordion summary elements and wait after each click
-      const summaries = document.querySelectorAll(
-        '.product__accordion summary[role="button"]'
-      );
-      for (const summary of summaries) {
-        summary.click();
-        await wait(500); // Wait for 500ms after each click
-      }
-
-      // Wait an additional second for all content to be fully loaded
-      await wait(1000);
-
-      const accordionContents = Array.from(
-        document.querySelectorAll(".accordion__content")
-      ).map((content) => {
-        return content.innerText;
-      });
-
-      while (accordionContents.length < 5) {
-        accordionContents.push("N/A");
-      }
-
-      const [
-        dimensions,
-        materials,
-        productFinish,
-        estimateShipping,
-        careInstructions
-      ] = accordionContents;
-
-      console.log(
-        `Basic product info: Brand: ${brand}, SKU: ${sku}, Title: ${title}, Price: ${price}`
-      );
+    const venueData = await page.evaluate(() => {
+      // Helper function to get text content by heading
+      const getContentAfterHeading = (headingText) => {
+        const headings = Array.from(document.querySelectorAll('h2'));
+        const targetHeading = headings.find(h => h.textContent.includes(headingText));
+        if (targetHeading) {
+          // Get the next sibling paragraph
+          let nextElement = targetHeading.nextElementSibling;
+          while (nextElement && nextElement.tagName !== 'P') {
+            nextElement = nextElement.nextElementSibling;
+          }
+          return nextElement ? nextElement.textContent.trim() : "N/A";
+        }
+        return "N/A";
+      };
 
       return {
-        brand,
-        sku,
-        title,
-        price,
-        description,
-        note,
-        dimensions,
-        materials,
-        productFinish,
-        estimateShipping,
-        careInstructions,
-        imageUrls: imageUrls.join(", ")
+        // Get venue name from the main heading
+        name: document.querySelector('h1')?.textContent.trim() || "N/A",
+        
+        // Get About section
+        about: getContentAfterHeading('About'),
+        
+        // Get Space and Capacity
+        spaceCapacity: getContentAfterHeading('Space Available and Capacity'),
+        
+        // Get Facilities
+        facilities: getContentAfterHeading('Facilities Available'),
+        
+        // Get Cuisines
+        cuisines: getContentAfterHeading('Cuisines'),
+        
+        // Get Location
+        location: getContentAfterHeading('Location'),
+        
+        // Get Other Services
+        otherServices: getContentAfterHeading('Other services'),
+        
+        // Get Price
+        price: document.querySelector('.price')?.textContent.trim() || 
+               document.querySelector('[class*="price"]')?.textContent.trim() || "N/A",
       };
     });
 
-    console.log("Scraped product data:", productData);
-    return { ...productData, url };
+    console.log(`Successfully scraped: ${venueData.name}`);
+    return venueData;
+
   } catch (error) {
     console.error(`Error scraping ${url}:`, error.message);
     return null;
-  } finally {
-    await page.close();
   }
 }
 
-async function scrapeProducts() {
-  const browser = await puppeteer
-    .launch({
-      headless: false,
-      defaultViewport: null,
-      args: ["--start-maximized"],
-      executablePath:
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-    })
-    .catch(async () => {
-      console.log(
-        "Failed to launch Chrome. Falling back to bundled Chromium..."
-      );
-      return puppeteer.launch({
-        headless: false,
-        defaultViewport: null,
-        args: ["--start-maximized"]
-      });
+async function getAllVenueLinks(page) {
+  try {
+    // Get all venue links from the listing page
+    const links = await page.evaluate(() => {
+      const venueCards = document.querySelectorAll('a[href*="/wedding-venues/"]');
+      return Array.from(venueCards, card => card.href);
     });
+    return links;
+  } catch (error) {
+    console.error('Error getting venue links:', error);
+    return [];
+  }
+}
 
-  const mainPage = await browser.newPage();
-  let currentPage = 1;
-  const products = new Set();
+async function scrapeVenues() {
+  const browser = await puppeteer.launch({
+    headless: false,
+    defaultViewport: null
+  });
 
   try {
-    while (true) {
-      await mainPage.goto(`${baseURL}?page=${currentPage}`, {
-        waitUntil: "networkidle0",
-        timeout: 60000
-      });
-      console.log(`Scraping page ${currentPage}`);
+    const page = await browser.newPage();
+    const venues = [];
+    let currentPage = 1;
+    let hasNextPage = true;
 
-      const productLinks = await mainPage.$$eval(
-        "#product-grid li a.full-unstyled-link",
-        (links) => links.map((link) => link.href)
-      );
+    while (hasNextPage) {
+      // Go to the venue listing page
+      const listingUrl = `https://www.wedmegood.com/vendors/all/wedding-venues?page=${currentPage}`;
+      await page.goto(listingUrl, { waitUntil: "networkidle0", timeout: 60000 });
+      console.log(`Scanning page ${currentPage} for venue links...`);
 
-      if (productLinks.length === 0) {
-        console.log("No more products found. Ending scrape.");
-        break;
+      // Get all venue links on current page
+      const venueLinks = await getAllVenueLinks(page);
+      
+      if (venueLinks.length === 0) {
+        hasNextPage = false;
+        continue;
       }
 
-      for (const link of productLinks) {
-        if (!Array.from(products).some((p) => p.url === link)) {
-          const productData = await scrapeProductPage(browser, link);
-          if (productData) {
-            products.add(productData);
-            console.log(`Scraped: ${productData.title}`);
-          }
+      // Scrape each venue
+      for (const link of venueLinks) {
+        console.log(`Scraping venue: ${link}`);
+        const venueData = await scrapeVenuePage(page, link);
+        if (venueData) {
+          venues.push(venueData);
         }
+        // Add a small delay between venues
+        await new Promise(r => setTimeout(r, 1000));
       }
 
       currentPage++;
+      // Add a delay between pages
+      await new Promise(r => setTimeout(r, 2000));
     }
+
+    // Save to CSV
+    await csvWriter.writeRecords(venues);
+    console.log(`Successfully scraped ${venues.length} venues to wedding_venues.csv`);
+
   } catch (error) {
-    console.error("An error occurred during scraping:", error);
+    console.error('Scraping error:', error);
   } finally {
     await browser.close();
   }
-
-  return Array.from(products);
 }
 
-(async () => {
-  try {
-    const products = await scrapeProducts();
-    await csvWriter.writeRecords(products);
-    console.log(
-      `Scraping completed. ${products.length} unique products saved to coffee_tables_detailed.csv`
-    );
-  } catch (error) {
-    console.error("An error occurred:", error);
-  }
-})();
+scrapeVenues();
+
+// const puppeteer = require("puppeteer");
+// const csv = require("csv-writer").createObjectCsvWriter;
+
+// const csvWriter = csv({
+//   path: "venue_links.csv",
+//   header: [{ id: "url", title: "URL" }]
+// });
+
+// (async () => {
+//   const browser = await puppeteer.launch({ headless: false });
+//   const page = await browser.newPage();
+//   await page.goto("https://www.wedmegood.com/vendors/all/wedding-venues", {
+//     waitUntil: "networkidle0",
+//     timeout: 60000
+//   });
+
+//   const venueLinks = await page.$$eval(".vendor-card a", links =>
+//     links.map(link => ({ url: link.href }))
+//   );
+
+//   await csvWriter.writeRecords(venueLinks);
+//   console.log("Venue Links saved to venue_links.csv");
+//   await browser.close();
+// })();
